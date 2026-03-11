@@ -1,6 +1,6 @@
 ---
 name: a2a
-version: "1.3.0"
+version: "1.4.0"
 description: "a2a (Agent-to-Agent) — 跨模型对抗式 code review。Claude 写的代码让 Codex 审，Codex 写的让 Claude 审，互相找茬不留死角。"
 argument-hint: '要审查的文件路径、PR 编号或 git diff 范围'
 allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
@@ -66,6 +66,15 @@ allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
 
 检测项：Claude CLI、Codex CLI。两个 CLI 都有才能真正跨模型对抗。
 
+## 前置校验（Gate）
+
+**a2a 只审代码变更，不审 Plan / 文档草案。**
+
+执行前必须确认存在可审查的代码变更：
+1. `git diff --stat` 或用户指定的文件有**实际代码修改**
+2. 如果只有 plan、TODO、纯文档变更 → **拒绝执行**，提示：`"没有检测到代码变更。请先完成编码再运行 a2a review。"`
+3. 如果用户在 Plan 阶段就调用 a2a → 同样拒绝，建议流程：`Plan → 执行 → a2a review`
+
 ## 执行流程
 
 ### Step 1: 环境检测 + 确定变更范围
@@ -76,7 +85,7 @@ allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
 ~/.claude/skills/a2a/scripts/preflight.sh --json
 ```
 
-确定变更范围：
+确定变更范围（必须是代码文件的 diff，不是 plan 文档）：
 ```bash
 # 自动检测
 git diff --stat HEAD~1
@@ -85,6 +94,8 @@ git diff --stat main...HEAD
 # 指定文件
 cat src/pages/target.vue
 ```
+
+如果 diff 为空或仅包含 .md 文件 → 触发 Gate 拒绝。
 
 ### Step 2: 加载审查基准
 
@@ -130,11 +141,16 @@ codex exec --cd "$(pwd)" $SKIP_GIT_FLAG --full-auto -- "按照以下审查清单
 claude -p "按照以下审查清单 review 代码变更..."
 ```
 
-每个 reviewer 收到统一的 **review packet**：
-- 变更 intent
-- 审查视角定义（只给自己那个 lens）
-- 完整 diff
-- 项目 red-line 约束
+每个 reviewer 收到统一的 **review packet**（严格精简）：
+- **变更 intent**：1-2 句话概括目的，**不传原始 plan 全文**
+- **审查视角定义**：只给自己那个 lens（从 review-lenses.md 摘取对应段落）
+- **完整 diff**：代码变更（这是唯一可以长的部分）
+- **项目 red-line 约束**：仅相关条目，不是整个 CLAUDE.md
+
+**Packet 精简规则**：
+- Plan / 设计文档 → 提炼为 1-2 句 intent，不传原文
+- CLAUDE.md / AGENT.md → 只提取代码红线和安全约束，跳过流程/协作类规则
+- 如果 diff 超过 500 行 → 按文件拆分，每个 reviewer 只审自己 lens 最相关的文件
 
 所有 reviewer **并行执行**，互不可见对方结果（防止从众效应）。
 

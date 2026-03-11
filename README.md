@@ -38,11 +38,13 @@ npm install -g @openai/codex
 ## How It Works
 
 ```
-You trigger /a2a
+Plan and implement the change first
        ↓
-Claude detects change scope + loads review baseline
+a2a checks that a real code diff exists
        ↓
-You confirm intent ("this change fixes X, must not touch Y")
+If the diff is empty or docs-only, a2a refuses to run
+       ↓
+Claude extracts a short intent + relevant red lines
        ↓
 Claude dispatches Codex reviewers in parallel ──┐
   - The Challenger: finds edge cases & error paths  │
@@ -53,6 +55,25 @@ Claude aggregates findings (preserving reviewer provenance)
        ↓
 Verdict: PASS / CONTESTED / REJECT / BLOCKED
 ```
+
+## Review Gate
+
+a2a reviews code changes only.
+
+- If there is no code diff, it refuses to run.
+- If the change only touches plans, TODOs, or markdown docs, it refuses to run.
+- Recommended workflow: `Plan -> Execute code -> a2a review`.
+
+## Lean Review Packet
+
+Each reviewer receives a deliberately small packet:
+
+- Intent distilled into 1-2 sentences instead of the full plan
+- Only the assigned review lens
+- The actual code diff
+- Only relevant red-line constraints from `CLAUDE.md` / `AGENT.md`
+
+This keeps reviewers focused on the code instead of wasting context on long planning documents.
 
 ## Review Modes
 

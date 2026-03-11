@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.4.0 — 2026-03-11
+- 新增前置 Gate：没有代码 diff 或只有 plan / 文档变更时，直接拒绝执行 a2a review
+- 精简 review packet：plan 只提炼 1-2 句 intent，`CLAUDE.md` / `AGENT.md` 仅提取相关 red-line 约束
+- 明确推荐工作流：`Plan -> 执行代码 -> a2a review`，把 review 固定在最后收口
+
 ## v1.3.0 — 2026-03-11
 - 删除所有 ANSI 进度 printf，改用 emoji 标注关键节点
 - 标题从 "Agent Clash" 改为 "a2a"
