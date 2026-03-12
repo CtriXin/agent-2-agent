@@ -4,6 +4,7 @@
 - `preflight.sh` 新增 TTL cache，默认复用 15 分钟本地检查结果，避免每次 `/a2a` 都重复探测环境
 - 新增 `--refresh` 与 `--ttl-seconds N`，支持强制刷新和按次禁用缓存（`--ttl-seconds 0`）
 - preflight 增加 best-effort 登录态检查，区分 CLI 已安装与登录缺失
+- 修复 Codex 登录态字符串解析，避免 `not logged in` 被误判成已登录
 - JSON 输出新增 `authenticated`、`cache`、`exit_code` 字段，便于上层复用
 - 文档补充 preflight 只做本地环境/登录态检查，不会发起 review 请求
 

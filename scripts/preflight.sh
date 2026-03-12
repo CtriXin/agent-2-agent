@@ -120,10 +120,10 @@ _probe_codex_auth() {
   raw=$(_run_with_timeout codex login status || true)
   raw=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')
 
-  if [[ "$raw" == *"logged in"* ]]; then
-    printf 'true'
-  elif [[ "$raw" == *"not logged in"* || "$raw" == *"logged out"* ]]; then
+  if [[ "$raw" == *"not logged in"* || "$raw" == *"logged out"* || "$raw" == *"not authenticated"* ]]; then
     printf 'false'
+  elif [[ "$raw" == *"logged in"* ]]; then
+    printf 'true'
   else
     printf 'unknown'
   fi
