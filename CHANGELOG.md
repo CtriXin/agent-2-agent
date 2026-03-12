@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.8.0 — 2026-03-12
+- **Token Bridge**：preflight 自动从 macOS Keychain 提取 OAuth access token 缓存到 `~/.cache/a2a/.claude-token`（权限 600），Codex sandbox 内通过 `ANTHROPIC_API_KEY` 环境变量传递给 `claude -p`，彻底打通 Codex→Claude 跨模型通道
+- **双向跨模型 dispatch**：Claude→Codex 走 `codex exec`，Codex→Claude 走 `claude -p` + token bridge，从 Claude Code 发起时也可用 Agent tool sub-agent
+- **代码作者检测**：Step 4 新增 author 判定（用户声明 > git metadata > 默认 Claude），按作者选择 dispatch 通道
+- **Step 1 自动补全 token**：`/a2a` 启动时自动检测 token 文件，缺失则从 Keychain 提取，用户零手动操作
+- **新增 `a2a-health.sh`**：一键自检 5 项（Skill 安装 / CLI 可用 / Auth 状态 / Token Bridge / 综合判定），token 缺失时自动修复，含实际 `claude -p` 调用测试
+- preflight `_set_mode_flags` 重构：Claude ready 判定支持 token bridge fallback（auth=false 但 token 文件存在 → ready）
+- 新增 `CLAUDE.md`：AI agent 进入项目的快速上下文
+- README 新增 "Using a2a with AI Agents" 深度使用指南
+
+## v1.7.0 — 2026-03-12
+- 审查规模判定与 reviewer 配置调整
+- 文档整理
+
 ## v1.6.0 — 2026-03-12
 - `preflight.sh` 新增 TTL cache，默认复用 15 分钟本地检查结果，避免每次 `/a2a` 都重复探测环境
 - 新增 `--refresh` 与 `--ttl-seconds N`，支持强制刷新和按次禁用缓存（`--ttl-seconds 0`）

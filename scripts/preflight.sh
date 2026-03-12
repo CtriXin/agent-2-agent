@@ -65,6 +65,7 @@ now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/a2a"
 CACHE_FILE="$CACHE_DIR/preflight.json"
+TOKEN_FILE="$CACHE_DIR/.claude-token"
 CACHE_SOURCE="fresh"
 CACHE_AGE_SECONDS=0
 
@@ -114,6 +115,36 @@ else:
 PYEOF
 }
 
+_cache_claude_token() {
+  # 从 macOS Keychain 提取 OAuth access token 并缓存到文件
+  # Codex sandbox 无法直接访问 Keychain，但可以读文件
+  if [[ "$(uname)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  local raw_cred=""
+  raw_cred=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
+  [[ -z "$raw_cred" ]] && return 0
+
+  local token=""
+  token=$(printf '%s' "$raw_cred" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    token = data.get('claudeAiOauth', {}).get('accessToken', '')
+    if token:
+        print(token)
+except Exception:
+    pass
+" 2>/dev/null || true)
+
+  if [[ -n "$token" ]]; then
+    mkdir -p "$CACHE_DIR"
+    printf '%s' "$token" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+  fi
+}
+
 _probe_codex_auth() {
   local raw=""
 
@@ -137,7 +168,12 @@ _is_ready() {
 }
 
 _set_mode_flags() {
-  local claude_ready="$(_is_ready "$_claude_ok" "$_claude_auth" && printf 'true' || printf 'false')"
+  # Claude 侧判定：available + (auth=true 或 token bridge 文件存在)
+  # Token bridge: preflight 将 OAuth token 从 Keychain 缓存到文件,
+  # 即使 claude auth status 报 false (Codex sandbox), 只要 token 文件在就能用。
+  local claude_has_token="$([[ -s "$TOKEN_FILE" ]] && printf 'true' || printf 'false')"
+  local claude_ready="$([[ "$_claude_ok" == "true" && ( "$_claude_auth" != "false" || "$claude_has_token" == "true" ) ]] && printf 'true' || printf 'false')"
+  # Codex 侧: 通过 codex exec 外部调用, 需要 available + auth。
   local codex_ready="$(_is_ready "$_codex_ok" "$_codex_auth" && printf 'true' || printf 'false')"
 
   _can_review=false
@@ -276,6 +312,9 @@ _detect_fresh() {
     if [[ -n "$_claude_ver" ]]; then
       _claude_ok=true
       _claude_auth=$(_probe_claude_auth)
+      # Bridge: 当 Keychain 可读时，缓存 OAuth token 到文件
+      # 这样 Codex sandbox 内也能通过文件读取 token 来调 claude -p
+      _cache_claude_token
     fi
   fi
 

@@ -123,11 +123,13 @@ Defined in `references/review-lenses.md`:
 ```
 a2a/
 ├── SKILL.md                    # Claude Code skill definition (the brain)
+├── CLAUDE.md                   # AI agent quick-context (read this first if you're an AI)
 ├── README.md                   # This file
 ├── references/
 │   └── review-lenses.md        # Challenger / Architect / Subtractor definitions
 └── scripts/
-    ├── preflight.sh            # Environment + auth check with TTL cache
+    ├── preflight.sh            # Environment check + token bridge cache (with TTL)
+    ├── a2a-health.sh           # One-click health check + auto-fix token bridge
     └── spinner.sh              # Animated progress indicator (terminal users)
 ```
 
@@ -146,7 +148,126 @@ a2a/
 - Cache path: `${XDG_CACHE_HOME:-~/.cache}/a2a/preflight.json`
 - `--refresh`: bypass cache once and rewrite it
 - `--ttl-seconds 0`: disable cache for the current run
-- Preflight only checks local CLI/auth state. It does not send a review request.
+- Preflight checks local CLI availability + auth state. It does not send a review request.
+
+---
+
+## Using a2a with AI Agents
+
+This section explains how a2a works **from the agent's perspective** — useful if you're integrating a2a into your own workflow or wondering what happens under the hood.
+
+### What is a "skill"?
+
+A Claude Code skill is a markdown file (`SKILL.md`) that Claude loads as instructions when you invoke it with `/a2a`. It's not a binary, not a plugin — just a prompt that teaches Claude a specific workflow. The `scripts/` directory contains helper scripts that the skill calls via Bash.
+
+### Installation for Agents
+
+a2a needs to live in Claude Code's skill directory. Two methods:
+
+**Method A: Symlink (recommended for development)**
+```bash
+git clone git@github.com:CtriXin/agent-2-agent.git ~/agent-2-agent
+ln -s ~/agent-2-agent ~/.claude/skills/a2a
+```
+
+**Method B: Copy (simpler, but manual updates)**
+```bash
+git clone git@github.com:CtriXin/agent-2-agent.git
+cp -r agent-2-agent ~/.claude/skills/a2a
+```
+
+After installation, restart Claude Code (or start a new conversation). Type `/a2a` and Claude will recognize the skill.
+
+### How the Cross-Model Dispatch Works
+
+When you run `/a2a`, Claude acts as the **orchestrator**. Here's the actual execution flow:
+
+```
+You (in Claude Code): /a2a src/api/handler.ts
+          │
+          ▼
+   Claude reads SKILL.md, runs preflight.sh --json
+          │
+          ▼
+   git diff --stat               ← determines what changed and how much
+          │
+          ▼
+   Scale assessment:
+     < 50 lines  → Light  → 1 reviewer (Challenger only)
+     50-200 lines → Medium → 2 reviewers (Challenger + Architect)
+     200+ lines  → Heavy  → 2-3 reviewers
+          │
+          ▼
+   Detect code author (git metadata / user declaration / default: Claude)
+          │
+          ├── Claude wrote it → dispatch to Codex:
+          │     codex exec --cd "$(pwd)" --full-auto -- "review..."
+          │
+          └── Codex wrote it → Claude reviews:
+                From Claude Code: Agent tool sub-agents (in-process)
+                From Codex:       ANTHROPIC_API_KEY=$token claude -p (token bridge)
+          │
+          ▼
+   Each reviewer runs independently (can't see others' output)
+          │
+          ▼
+   Claude aggregates all findings + runs red-line scan
+          │
+          ▼
+   Outputs verdict: PASS / CONTESTED / REJECT
+```
+
+**Key point**: the reviewer always runs on the **opposing model**. Claude-authored code goes to Codex via `codex exec`; Codex-authored code is reviewed by Claude (via Agent tool when orchestrated from Claude Code, or via `claude -p` + token bridge when orchestrated from Codex).
+
+### What If Only One CLI Is Available?
+
+If you only have Claude Code installed (no Codex), a2a falls back to **single-model-multi-lens** mode:
+
+- Instead of dispatching to Codex, Claude spawns independent sub-agents via the Agent tool
+- Each sub-agent gets one review lens (Challenger / Architect / Subtractor)
+- Sub-agents run in isolation — they can't see each other's findings
+- The report will say `Mode: single-model-multi-lens`
+
+This is still useful (multiple independent perspectives > self-review), but the quality is lower than true cross-model review because the same model shares the same blind spots.
+
+### Preflight: What It Actually Checks
+
+Preflight checks CLI **availability** and **auth status** to determine the review mode.
+
+```bash
+# What preflight does internally:
+claude --version      # → "2.1.74"  → available = true
+codex --version       # → "0.114.0" → available = true
+codex login status    # → authenticated = true/false/unknown
+```
+
+**Key design**: a2a is always orchestrated by Claude Code. Claude-side reviews run via **Agent tool** (in-process, inherits auth automatically). Codex-side reviews run via **`codex exec`** (Codex has its own API key).
+
+This means:
+- **Claude ready = available + (auth ok OR token bridge file exists)** — even if `claude auth status` reports false (Codex sandbox can't read Keychain), the cached token file counts
+- **Codex auth matters** — `codex exec` is an external call, Codex needs its own login
+- **Token bridge** — preflight extracts OAuth token from macOS Keychain → caches to `~/.cache/a2a/.claude-token` (mode 600) → Codex reads file and passes as `ANTHROPIC_API_KEY` env var to `claude -p`
+
+**Cross-model is determined by both CLIs being ready**:
+- Claude ready + Codex ready → `adversarial` mode (exit code 0)
+- Only one ready → `single-model-multi-lens` mode (exit code 2)
+
+### Common Issues
+
+**Q: Preflight says PARTIAL but I have both CLIs installed**
+Run `preflight.sh --refresh` to bypass the 15-minute cache. If it still shows PARTIAL, check that both `claude --version` and `codex --version` return valid output in your terminal.
+
+**Q: Can I use a2a from Codex instead of Claude?**
+Yes! Thanks to token bridge, Codex can call `claude -p` for cross-model review. The only prerequisite: run `preflight.sh` once from a non-sandboxed environment (normal terminal or Claude Code) to cache the OAuth token. After that, Codex reads the cached token file and passes it as `ANTHROPIC_API_KEY`. If anything goes wrong, run `a2a-health.sh` for diagnosis + auto-fix.
+
+**Q: Review is slow / timing out**
+Each reviewer has a 5-minute default timeout. For large diffs (200+ lines), the Heavy+ scale dispatches 3 reviewers in parallel, which takes ~2 minutes. If it's consistently slow, check your network connection to the model APIs.
+
+**Q: Can I review a plan instead of code?**
+Yes. If there's no git diff, explicitly point a2a at a design doc: `/a2a docs/design.md`. a2a will switch to Plan Review mode.
+
+**Q: How do I integrate a2a into CI?**
+a2a is designed for interactive use in Claude Code, not CI pipelines. For CI, consider extracting the review lenses from `references/review-lenses.md` and building your own automation.
 
 ---
 
@@ -156,9 +277,14 @@ a2a/
 
 **核心原则**：Claude 写的代码让 Codex 审，Codex 写的让 Claude 审。不同模型有不同盲区——让它们互相找茬，bug 无处藏身。
 
-**安装**：clone 本 repo，把 `agent-2-agent/` 目录复制到 `~/.claude/skills/a2a`，重启 Claude Code，输入 `/a2a` 即可使用。
+**安装**：clone 本 repo，复制到 `~/.claude/skills/a2a`（或 symlink），重启 Claude Code，输入 `/a2a` 即可使用。
 
-**preflight 缓存**：默认复用 15 分钟本地结果，不必每次 `/a2a` 都重复跑探测。登录状态刚变化时，用 `--refresh` 强制刷新；想单次禁用缓存，用 `--ttl-seconds 0`。
+**双向跨模型**：
+- Claude → Codex：`codex exec`（Codex 有自己的 API key）
+- Codex → Claude：`claude -p` + token bridge（自动从 macOS Keychain 提取 OAuth token 缓存到文件，Codex sandbox 通过环境变量读取）
+- 从 Claude Code 内发起时，Claude 侧 review 也可走 Agent tool sub-agent（in-process，天然有 auth）
+
+**Token Bridge**：首次 `/a2a` 或 `preflight.sh` 时自动提取，用户零操作。出问题跑 `a2a-health.sh` 一键自检+修复。
 
 **三大视角**：Challenger（找 edge case）、Architect（审设计决策）、Subtractor（删多余代码）。每个视角独立执行，互不干扰，防止从众效应。
 
