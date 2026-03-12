@@ -1,6 +1,6 @@
 ---
 name: a2a
-version: "1.4.0"
+version: "1.5.0"
 description: "a2a (Agent-to-Agent) — 跨模型对抗式 code review。Claude 写的代码让 Codex 审，Codex 写的让 Claude 审，互相找茬不留死角。"
 argument-hint: '要审查的文件路径、PR 编号或 git diff 范围'
 allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
@@ -37,14 +37,22 @@ allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
 
 ## 审查规模判定
 
-先算变更量，再决定派几个 reviewer：
+先算变更量，再决定派几个 reviewer。**必须严格遵守，不得跳级。**
 
-| 规模 | 行数 | Reviewer 配置 | 预估耗时 |
+```bash
+# 硬性检查（dispatch 前执行）
+diff_lines=$(git diff --stat HEAD~1 | tail -1 | grep -oE '[0-9]+' | head -1)
+new_lines=$(git diff HEAD~1 --diff-filter=A --stat | tail -1 | grep -oE '[0-9]+' | head -1)
+dir_count=$(git diff --name-only HEAD~1 | xargs -I{} dirname {} | sort -u | wc -l)
+```
+
+| 规模 | 条件 | Reviewer 配置 | 预估耗时 |
 |------|------|--------------|---------|
-| **Light** | < 50 | 1 人（Challenger） | ~30s |
-| **Medium** | 50–200 | 2 人（Challenger + Architect） | ~1min |
-| **Heavy** | 200+ | 3 人全上 | ~2min |
-| **Cross-module** | 涉及 3+ 目录 | 3 人 + red-line scan | ~3min |
+| **Light** | < 50 行 | Challenger only | ~30s |
+| **Medium** | 50–200 行 | Challenger + Architect | ~1min |
+| **Heavy** | 200+ 行，新增 ≤ 100 行 | Challenger + Architect | ~1.5min |
+| **Heavy+** | 200+ 行，新增 > 100 行 | 三人全上 | ~2min |
+| **Cross-module** | 涉及 3+ 目录 | 三人全上 | ~2min |
 
 ## 三大审查视角
 
@@ -68,12 +76,11 @@ allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
 
 ## 前置校验（Gate）
 
-**a2a 只审代码变更，不审 Plan / 文档草案。**
+a2a 支持审查**代码变更**和**Plan / 设计方案**，自动判定模式：
 
-执行前必须确认存在可审查的代码变更：
-1. `git diff --stat` 或用户指定的文件有**实际代码修改**
-2. 如果只有 plan、TODO、纯文档变更 → **拒绝执行**，提示：`"没有检测到代码变更。请先完成编码再运行 a2a review。"`
-3. 如果用户在 Plan 阶段就调用 a2a → 同样拒绝，建议流程：`Plan → 执行 → a2a review`
+1. **Code Review 模式**：`git diff --stat` 或用户指定的文件有实际代码修改 → 进入代码审查
+2. **Plan Review 模式**：无 diff，但用户明确指定了 plan / 设计文档 → 进入 Plan 审查
+3. **无审查对象**：无 diff 也无用户指定 → 提示：`"未检测到审查对象。请指定代码变更范围或要审查的 plan 文件。"`
 
 ## 执行流程
 
@@ -85,7 +92,7 @@ allowed-tools: Read, Write, Bash, Grep, Glob, Agent, AskUserQuestion
 ~/.claude/skills/a2a/scripts/preflight.sh --json
 ```
 
-确定变更范围（必须是代码文件的 diff，不是 plan 文档）：
+确定变更范围：
 ```bash
 # 自动检测
 git diff --stat HEAD~1
@@ -95,15 +102,15 @@ git diff --stat main...HEAD
 cat src/pages/target.vue
 ```
 
-如果 diff 为空或仅包含 .md 文件 → 触发 Gate 拒绝。
+根据 Gate 规则判定模式：有 diff → Code Review；无 diff 但有 plan → Plan Review；否则拒绝。
 
 ### Step 2: 加载审查基准
 
-> 📋 读取以下文件建立 review context
+> 📋 读取视角定义（red-line 扫描延迟到 Step 5 统一执行）
 
 1. `references/review-lenses.md` — 三大视角定义
-2. 目标项目的 `AGENT.md` / `AGENTS.md`（如存在）— 编码规范与 red line
-3. 目标项目的 `.ai/constraints.json`（如存在）— 硬约束
+2. 目标项目的 `AGENT.md` / `AGENTS.md`（如存在）— 仅用于理解项目 context，**不传给 reviewer**
+3. 目标项目的 `.ai/constraints.json`（如存在）— 同上，留给 Step 5 统一扫描
 
 ### Step 3: 明确变更意图
 
@@ -141,22 +148,51 @@ codex exec --cd "$(pwd)" $SKIP_GIT_FLAG --full-auto -- "按照以下审查清单
 claude -p "按照以下审查清单 review 代码变更..."
 ```
 
-每个 reviewer 收到统一的 **review packet**（严格精简）：
+每个 reviewer 收到**专属 review packet**（按 lens 裁剪，严格精简）：
+
+**通用字段**（所有 reviewer 共享）：
 - **变更 intent**：1-2 句话概括目的，**不传原始 plan 全文**
 - **审查视角定义**：只给自己那个 lens（从 review-lenses.md 摘取对应段落）
-- **完整 diff**：代码变更（这是唯一可以长的部分）
-- **项目 red-line 约束**：仅相关条目，不是整个 CLAUDE.md
 
-**Packet 精简规则**：
+**Lens 专属 diff 裁剪**：
+| Lens | 收到的 diff 内容 |
+|------|----------------|
+| **Challenger** | 完整 diff（需要看具体代码找 bug） |
+| **Architect** | 文件列表 + 函数签名 + 变更摘要（审结构不需要逐行） |
+| **Subtractor** | 完整 diff + 新增文件列表（找多余代码） |
+
+**不传给 reviewer 的内容**：
+- ~~项目 red-line 约束~~ → 移到 Step 5 由 Claude 统一扫描
+- ~~CLAUDE.md / AGENT.md~~ → 不传给 reviewer
 - Plan / 设计文档 → 提炼为 1-2 句 intent，不传原文
-- CLAUDE.md / AGENT.md → 只提取代码红线和安全约束，跳过流程/协作类规则
-- 如果 diff 超过 500 行 → 按文件拆分，每个 reviewer 只审自己 lens 最相关的文件
+
+**Reviewer 输出限制**（必须附加到每个 reviewer 的 prompt 末尾）：
+```
+输出限制：
+- 每条 finding ≤ 3 行（trigger + impact + fix）
+- 总 findings ≤ 10 条
+- 无 finding 时只输出 "LGTM"，不要写分析过程
+```
 
 所有 reviewer **并行执行**，互不可见对方结果（防止从众效应）。
 
-### Step 5: 汇总 Findings
+### Step 5: 汇总 Findings + Red-Line Scan
 
-> 📊 收集所有 reviewer 发现，保留 reviewer provenance，按 severity 分级
+> 📊 收集所有 reviewer 发现，**然后 Claude 统一执行一次 red-line scan**
+
+**Red-Line Scan**（仅在此步骤执行一次）：
+1. 读取项目的 `AGENT.md`、`CLAUDE.md`、`.ai/constraints.json`
+2. 提取 red-line 约束条目
+3. 对完整 diff 扫描一次，违规项作为 🔴 High finding 加入汇总
+
+通用 red line（项目无配置时的兜底）：
+```
+eval() / new Function() / innerHTML =   → security risk
+未经封装的 process.env 直接读取          → environment leak
+硬编码 secret / token                   → credential exposure
+```
+
+**汇总规则**：保留 reviewer provenance，按 severity 分级
 
 | Severity | 定义 | 示例 |
 |----------|------|------|
@@ -218,12 +254,12 @@ claude -p "按照以下审查清单 review 代码变更..."
 
 ## 项目规范自动适配
 
-审查时自动检测目标项目根目录的以下文件（任一存在即读取）：
+审查时自动检测目标项目根目录的以下文件（任一存在即读取），**仅在 Step 5 统一扫描时使用**：
 - `AGENT.md` / `AGENTS.md` — 编码规范与 red line
 - `CLAUDE.md` — Claude 专属约束
 - `.ai/constraints.json` — 硬约束
 
-**无需 hardcode 项目规则**——每个项目自带自己的标准，reviewer 自动遵守。
+**无需 hardcode 项目规则**——每个项目自带自己的标准，Step 5 统一检查。
 
 ## Fallback: Single-Model-Multi-Lens 模式
 

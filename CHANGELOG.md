@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.0 — 2026-03-12
+- 恢复并明确 Plan Review：无代码 diff 但用户显式指定 plan / 设计文档时，也可以进入审查
+- 收紧审查规模规则：按变更行数、新增代码量和目录跨度决定 reviewer 组合，不允许随意跳级
+- review packet 改为按 lens 裁剪，项目 red-line 约束延后到 Claude 汇总阶段统一扫描
+
 ## v1.4.0 — 2026-03-11
 - 新增前置 Gate：没有代码 diff 或只有 plan / 文档变更时，直接拒绝执行 a2a review
 - 精简 review packet：plan 只提炼 1-2 句 intent，`CLAUDE.md` / `AGENT.md` 仅提取相关 red-line 约束

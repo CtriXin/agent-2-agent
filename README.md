@@ -38,13 +38,15 @@ npm install -g @openai/codex
 ## How It Works
 
 ```
-Plan and implement the change first
+Prepare a code diff or explicitly point a2a at a plan/design doc
        ↓
-a2a checks that a real code diff exists
+a2a determines the review target
        ↓
-If the diff is empty or docs-only, a2a refuses to run
+Code diff => code review
+Explicit plan doc => plan review
+No target => refuse to run
        ↓
-Claude extracts a short intent + relevant red lines
+Claude extracts a short intent and picks reviewers by scale
        ↓
 Claude dispatches Codex reviewers in parallel ──┐
   - The Challenger: finds edge cases & error paths  │
@@ -58,22 +60,22 @@ Verdict: PASS / CONTESTED / REJECT / BLOCKED
 
 ## Review Gate
 
-a2a reviews code changes only.
+a2a supports two entry modes:
 
-- If there is no code diff, it refuses to run.
-- If the change only touches plans, TODOs, or markdown docs, it refuses to run.
-- Recommended workflow: `Plan -> Execute code -> a2a review`.
+- Code review: if there is a real code diff, a2a reviews the code.
+- Plan review: if there is no diff but the user explicitly points to a plan/design doc, a2a reviews the plan.
+- No target: if there is neither a diff nor an explicit target file, a2a refuses to run.
 
 ## Lean Review Packet
 
-Each reviewer receives a deliberately small packet:
+Each reviewer receives a deliberately small, lens-specific packet:
 
 - Intent distilled into 1-2 sentences instead of the full plan
 - Only the assigned review lens
-- The actual code diff
-- Only relevant red-line constraints from `CLAUDE.md` / `AGENT.md`
+- Only the diff slice that reviewer actually needs
+- Project red-line constraints are scanned once by Claude during aggregation, not copied into every reviewer packet
 
-This keeps reviewers focused on the code instead of wasting context on long planning documents.
+This keeps reviewers focused on the review target instead of wasting context on long planning documents or duplicated policy text.
 
 ## Review Modes
 
@@ -141,6 +143,11 @@ a2a/
 **安装**：clone 本 repo，把 `agent-2-agent/` 目录复制到 `~/.claude/skills/a2a`，重启 Claude Code，输入 `/a2a` 即可使用。
 
 **三大视角**：Challenger（找 edge case）、Architect（审设计决策）、Subtractor（删多余代码）。每个视角独立执行，互不干扰，防止从众效应。
+
+**审查入口**：
+- 有代码 diff 时进入 Code Review
+- 没有 diff 但明确指定 plan / 设计文档时进入 Plan Review
+- 两者都没有时拒绝执行，要求先给出审查对象
 
 ---
 

@@ -84,19 +84,3 @@
 
 ### Mapped Principles
 `subtract-before-you-add` · `outcome-oriented-execution` · `cost-aware-delegation`
-
----
-
-## 视角之外：Project Red-Line Scan
-
-Reviewer 在各自视角审查完毕后，自动读取项目的 `AGENT.md`、`CLAUDE.md` 或 `.ai/constraints.json`，提取 red-line 约束并追加扫描。
-
-常见通用 red line（仅作参考，以项目实际配置为准）：
-
-```
-eval() / new Function() / innerHTML =   → security risk
-未经封装的 process.env 直接读取          → environment leak
-硬编码 secret / token                   → credential exposure
-```
-
-项目有自定义 red line 时，优先使用项目配置；项目无配置时，仅执行上述通用安全 red line。
