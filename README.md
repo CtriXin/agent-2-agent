@@ -17,7 +17,7 @@
 git clone git@github.com:CtriXin/agent-2-agent.git
 cp -r agent-2-agent ~/.claude/skills/a2a
 
-# 2. Check environment
+# 2. Check environment once (cached for 15 minutes by default)
 ~/.claude/skills/a2a/scripts/preflight.sh
 
 # 3. Use in Claude Code
@@ -36,6 +36,11 @@ cp -r agent-2-agent ~/.claude/skills/a2a
 Install Codex CLI:
 ```bash
 npm install -g @openai/codex
+```
+
+Refresh local status after login changes:
+```bash
+~/.claude/skills/a2a/scripts/preflight.sh --refresh
 ```
 
 ## How It Works
@@ -122,7 +127,7 @@ a2a/
 ├── references/
 │   └── review-lenses.md        # Challenger / Architect / Subtractor definitions
 └── scripts/
-    ├── preflight.sh            # Environment check (exit 0=READY, 2=PARTIAL, 3=MISSING)
+    ├── preflight.sh            # Environment + auth check with TTL cache
     └── spinner.sh              # Animated progress indicator (terminal users)
 ```
 
@@ -135,6 +140,14 @@ a2a/
 64 USAGE    — Bad arguments
 ```
 
+## Preflight Cache
+
+- Default TTL: 900 seconds
+- Cache path: `${XDG_CACHE_HOME:-~/.cache}/a2a/preflight.json`
+- `--refresh`: bypass cache once and rewrite it
+- `--ttl-seconds 0`: disable cache for the current run
+- Preflight only checks local CLI/auth state. It does not send a review request.
+
 ---
 
 ## 中文说明
@@ -144,6 +157,8 @@ a2a/
 **核心原则**：Claude 写的代码让 Codex 审，Codex 写的让 Claude 审。不同模型有不同盲区——让它们互相找茬，bug 无处藏身。
 
 **安装**：clone 本 repo，把 `agent-2-agent/` 目录复制到 `~/.claude/skills/a2a`，重启 Claude Code，输入 `/a2a` 即可使用。
+
+**preflight 缓存**：默认复用 15 分钟本地结果，不必每次 `/a2a` 都重复跑探测。登录状态刚变化时，用 `--refresh` 强制刷新；想单次禁用缓存，用 `--ttl-seconds 0`。
 
 **三大视角**：Challenger（找 edge case）、Architect（审设计决策）、Subtractor（删多余代码）。每个视角独立执行，互不干扰，防止从众效应。
 

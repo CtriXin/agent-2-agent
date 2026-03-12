@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.0 — 2026-03-12
+- `preflight.sh` 新增 TTL cache，默认复用 15 分钟本地检查结果，避免每次 `/a2a` 都重复探测环境
+- 新增 `--refresh` 与 `--ttl-seconds N`，支持强制刷新和按次禁用缓存（`--ttl-seconds 0`）
+- preflight 增加 best-effort 登录态检查，区分 CLI 已安装与登录缺失
+- JSON 输出新增 `authenticated`、`cache`、`exit_code` 字段，便于上层复用
+- 文档补充 preflight 只做本地环境/登录态检查，不会发起 review 请求
+
 ## v1.5.0 — 2026-03-12
 - 恢复并明确 Plan Review：无代码 diff 但用户显式指定 plan / 设计文档时，也可以进入审查
 - 收紧审查规模规则：按变更行数、新增代码量和目录跨度决定 reviewer 组合，不允许随意跳级
